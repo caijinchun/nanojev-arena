@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>贪吃蛇大乱斗 · 你 vs NanoJev</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --line:#232a38; --txt:#dbe2ee; --dim:#7d8798;
+    --gold:#facc15; --red:#f87171; --food:#ef4444;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--txt); font:14px/1.5 "Segoe UI",system-ui,sans-serif; min-height:100vh}
+  header{padding:14px 20px 10px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline}
+  h1{font-size:19px; font-weight:700}
+  h1 em{font-style:normal; color:var(--gold)}
+  header .sub{color:var(--dim); font-size:12.5px}
+  main{display:flex; gap:14px; padding:14px 20px; align-items:flex-start; flex-wrap:wrap}
+  #stage{position:relative; flex:0 1 700px; min-width:320px; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  canvas{display:block; margin:0 auto}
+  #overlay{position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; gap:10px;
+    background:rgba(8,10,15,.72); font-size:20px; font-weight:700; text-align:center}
+  #overlay.show{display:flex}
+  #overlay .small{font-size:13px; color:var(--dim); font-weight:400}
+  aside{flex:1 1 300px; min-width:280px; display:flex; flex-direction:column; gap:12px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px}
+  .card h2{font-size:13px; color:var(--dim); font-weight:600; letter-spacing:.08em; margin-bottom:8px}
+  table{width:100%; border-collapse:collapse; font-size:13px}
+  th{color:var(--dim); font-weight:500; text-align:left; font-size:11.5px; padding:2px 4px}
+  td{padding:4px; border-top:1px solid var(--line); font-variant-numeric:tabular-nums}
+  td.dead{color:var(--dim)}
+  .swatch{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px}
+  .brain{font-size:12px}
+  .brain .brow{margin:7px 0 3px; display:flex; align-items:center; gap:6px}
+  .brain .nm{flex:0 0 92px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .chip{font-size:10px; padding:1px 6px; border-radius:6px; border:1px solid var(--line); color:var(--dim)}
+  .barRow{display:flex; align-items:center; gap:6px; margin:2px 0 2px 98px}
+  .barRow .lbl{width:14px; color:var(--dim); font-size:11px}
+  .barTrack{flex:1; height:8px; background:#1a2030; border-radius:4px; overflow:hidden}
+  .barFill{height:100%; border-radius:4px; transition:width .25s}
+  .barRow .pct{width:38px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); font-size:11px}
+  .barRow.chosen .lbl{color:var(--txt); font-weight:700}
+  .row{display:flex; align-items:center; gap:8px; margin:6px 0; flex-wrap:wrap}
+  button{background:#1b2130; color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:6px 12px; font-size:13px; cursor:pointer}
+  button:hover{border-color:#3a4459}
+  button.primary{background:#1f3a2b; border-color:#2f6e4b}
+  select{background:#171c27; color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font-size:13px}
+  .note{font-size:11.5px; color:var(--dim); line-height:1.55}
+  #statusBar{padding:8px 12px; background:#0d1017; border-top:1px solid var(--line); font-size:12.5px; color:var(--dim); display:flex; gap:16px; flex-wrap:wrap}
+  #statusBar b{color:var(--txt); font-weight:600}
+  #toast{position:fixed; top:18px; left:50%; transform:translateX(-50%); background:#1f3a2b; border:1px solid #2f6e4b; padding:10px 22px; border-radius:9px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .3s; z-index:10}
+  #toast.show{opacity:1}
+  kbd{background:#1b2130; border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>贪吃蛇大乱斗 <em>·</em> 你 vs NanoJev</h1>
+  <div class="sub">代码规划器排除必死方向 → 模型在候选间按分布选择 · 蛇头上的小条是模型实时的方向概率 · <kbd>↑↓←→</kbd>/<kbd>WASD</kbd> 移动 · <kbd>P</kbd> 暂停 · <kbd>R</kbd> 重开</div>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="cv" width="640" height="640"></canvas>
+    <div id="overlay"><div id="ovTitle"></div><div class="small" id="ovSub"></div></div>
+    <div id="statusBar">
+      <span>Tick <b id="stTick">0</b></span>
+      <span>上次推理 <b id="stLat">–</b></span>
+      <span>前向次数 <b id="stFwd">0</b></span>
+      <span>服务 <b>127.0.0.1:8766 · games_gold_seed17</b></span>
+    </div>
+  </div>
+  <aside>
+    <div class="card">
+      <h2>记分板</h2>
+      <table><thead><tr><th>蛇</th><th>食物</th><th>长度</th><th>状态</th></tr></thead><tbody id="board"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>AI 思维(NanoJev 输出分布)</h2>
+      <div class="brain" id="brain">等待首次推理…</div>
+    </div>
+    <div class="card">
+      <h2>设置</h2>
+      <div class="row">
+        <button class="primary" id="btnPause">⏸ 暂停 (P)</button>
+        <button id="btnRestart">↺ 重开 (R)</button>
+      </div>
+      <div class="row"><label>AI 蛇</label>
+        <select id="inAI"><option>1</option><option>2</option><option>3</option><option selected>4</option></select>
+        <label>速度</label>
+        <select id="inSpeed"><option value="300">慢</option><option value="220" selected>中</option><option value="150">快</option></select>
+      </div>
+    </div>
+    <div class="card">
+      <h2>规则与架构</h2>
+      <div class="note">
+        你(金色)和 AI 蛇在同一张 22×22 地图抢食物。撞墙、撞任何蛇身即死,尸体化作食物。
+        AI 是混合决策:<b>代码规划器</b>先排除下一步必死的方向、再按「到最近食物的静态最短路」筛出候选,
+        <b>NanoJev(games_gold_seed17)</b>收到一个 choice 问题,在候选间输出完整概率分布(蛇头悬浮条 = 方向概率,亮色为模型之选),
+        取 argmax。模型思考需要 1-2 秒,期间由规划器代管——所以 AI 永远不会因为"没想好"而撞墙。
+        你死不了 AI,AI 也咬不到你,但尸体和抢食都是真的。
+      </div>
+    </div>
+  </aside>
+</main>
+<div id="toast"></div>
+<script>
+'use strict';
+/* ---------- 常量:与仓库 snake_game.py / evaluate_composed_snake.py 严格对齐 ---------- */
+const SIZE=22;
+const DIRNAMES=['north','east','south','west'];
+const DR={north:-1,east:0,south:1,west:0}, DC={north:0,east:1,south:0,west:-1};
+const OPPOSITE={north:'south',south:'north',east:'west',west:'east'};
+const COMPOSED_INSTR = "Choose the offered move that best preserves space for subsequent movement while collecting the currently visible food. A common code planner has selected the offered candidates. Use only the current physical state; tied moves are equivalent.";
+const AI_DEFS=[
+  {name:'NanoJev·青', color:'#22d3ee'},
+  {name:'NanoJev·粉', color:'#f472b6'},
+  {name:'NanoJev·紫', color:'#a78bfa'},
+  {name:'NanoJev·绿', color:'#4ade80'},
+];
+const HUMAN_COLOR='#facc15', HUMAN_NAME='你';
+
+/* ---------- 游戏状态 ---------- */
+let snakes=[], foods=[], tick=0, paused=false, timer=null, tickMs=220, fwdCount=0, lastLat=0;
+const key=r=>r[0]+','+r[1];
+const inside=(r,c)=>r>=0&&r<SIZE&&c>=0&&c<SIZE;
+
+function freeCell(){
+  for(let tries=0;tries<400;tries++){
+    const r=Math.floor(Math.random()*SIZE), c=Math.floor(Math.random()*SIZE);
+    if(inside(r,c)&&!occupied(r,c)) return [r,c];
+  }
+  return null;
+}
+function occupied(r,c){
+  if(foods.some(f=>f[0]===r&&f[1]===c)) return true;
+  return snakes.some(s=>s.alive&&s.body.some(b=>b[0]===r&&b[1]===c));
+}
+function addFood(){
+  const cell=freeCell(); if(cell) foods.push(cell);
+}
+function makeSnake(name,color,isHuman,head,dir){
+  const d=[DR[dir],DC[dir]];
+  const body=[[head[0],head[1]],[head[0]-d[0],head[1]-d[1]],[head[0]-2*d[0],head[1]-2*d[1]]];
+  return {name,color,isHuman,body,dir,alive:true,respawnAt:0,score:0,deaths:0,
+          queued:dir,intent:null,probs:null,probsTs:0,thinking:false};
+}
+function resetGame(){
+  const nAI=+document.getElementById('inAI').value;
+  snakes=[makeSnake(HUMAN_NAME,HUMAN_COLOR,true,[Math.floor(SIZE/2),4],'east')];
+  const corners=[[2,2,'east'],[2,SIZE-3,'south'],[SIZE-3,SIZE-3,'west'],[SIZE-3,2,'north']];
+  for(let i=0;i<nAI;i++){const [r,c,d]=corners[i]; snakes.push(makeSnake(AI_DEFS[i].name,AI_DEFS[i].color,false,[r,c],d));}
+  foods=[]; for(let i=0;i<3;i++) addFood();
+  tick=0; fwdCount=0; lastLat=0; document.getElementById('stFwd').textContent=0;
+  hideOverlay(); updateBoard();
+}
+
+/* ---------- 规划器(代码层,evaluate_composed_snake.plan_candidates 的多蛇版) ---------- */
+function otherBodies(me){
+  const cells=new Set();
+  for(const s of snakes){ if(s===me||!s.alive) continue;
+    for(const b of s.body) cells.add(key(b)); }
+  return cells;
+}
+function nearestFood(head){
+  let best=null,bd=1e9;
+  for(const f of foods){const d=Math.abs(f[0]-head[0])+Math.abs(f[1]-head[1]); if(d<bd){bd=d;best=f;}}
+  return best;
+}
+function bfsDist(nextBody, food, blocked){
+  if(!food) return null;
+  const start=key(nextBody[0]), target=key(food);
+  if(start===target) return 0;
+  const b=new Set(blocked);
+  for(let i=1;i<nextBody.length;i++) b.add(key(nextBody[i]));
+  const q=[[nextBody[0][0],nextBody[0][1],0]], seen=new Set([start]);
+  while(q.length){
+    const [r,c,d]=q.shift();
+    for(const a of DIRNAMES){
+      const nr=r+DR[a],nc=c+DC[a],k=nr+','+nc;
+      if(!inside(nr,nc)||seen.has(k)||b.has(k)) continue;
+      if(k===target) return d+1;
+      seen.add(k); q.push([nr,nc,d+1]);
+    }
+  }
+  return null;
+}
+function planCandidates(s){
+  const others=otherBodies(s), food=nearestFood(s.body[0]);
+  const safe=[], dist={};
+  for(const a of DIRNAMES){
+    if(s.body.length>1 && a===OPPOSITE[s.dir]) continue;      // 不许反向
+    const hr=s.body[0][0]+DR[a], hc=s.body[0][1]+DC[a];
+    if(!inside(hr,hc)) continue;                               // 撞墙
+    const growing=food&&hr===food[0]&&hc===food[1];
+    const own=growing?s.body:s.body.slice(0,-1);               // 尾巴让位规则
+    if(own.some(b=>b[0]===hr&&b[1]===hc)) continue;            // 撞自己
+    if(others.has(hr+','+hc)) continue;                        // 撞别的蛇(保守:不让位)
+    safe.push(a);
+    const nextBody=[[hr,hc],...(growing?s.body:s.body.slice(0,-1))];
+    dist[a]=bfsDist(nextBody, food, others);
+  }
+  const reachable=safe.filter(a=>dist[a]!=null);
+  let offered;
+  if(reachable.length){ const m=Math.min(...reachable.map(a=>dist[a])); offered=reachable.filter(a=>dist[a]===m); }
+  else offered=safe.slice();
+  return {safe, offered, dist, mode:reachable.length?'path':'allsafe'};
+}
+function fatalNow(s,a){
+  if(s.body.length>1 && a===OPPOSITE[s.dir]) return true;
+  const hr=s.body[0][0]+DR[a], hc=s.body[0][1]+DC[a];
+  if(!inside(hr,hc)) return true;
+  const food=nearestFood(s.body[0]);
+  const growing=food&&hr===food[0]&&hc===food[1];
+  const own=growing?s.body:s.body.slice(0,-1);
+  if(own.some(b=>b[0]===hr&&b[1]===hc)) return true;
+  for(const o of snakes){ if(o===s||!o.alive) continue;
+    if(o.body.some(b=>b[0]===hr&&b[1]===hc)) return true; }
+  return false;
+}
+
+/* ---------- 模型请求(严格对齐 render_request / render_composed_request) ---------- */
+function snakeStateText(s,food){
+  return `Snake on a ${SIZE}x${SIZE} board. Coordinates are zero-based (row,column); north decreases row and east increases column. Body in head-first order: ${JSON.stringify(s.body)}. Direction: ${s.dir}. Food: ${JSON.stringify(food)}. Reverse moves are disallowed. A move onto food grows the body; otherwise the tail vacates. Entering that vacated tail cell is allowed. Walls and occupied body cells cause collision.`;
+}
+let brainBusy=false, apiDown=false;
+async function brainLoop(){
+  if(brainBusy||paused) return;
+  const candidates=snakes.filter(s=>!s.isHuman&&s.alive&&!s.thinking);
+  const targets=[];
+  for(const s of candidates){
+    const plan=planCandidates(s);
+    if(plan.offered.length>=2) targets.push({s,plan});
+    else s.intent={action:plan.offered[0]||null, direct:true};
+  }
+  if(!targets.length||apiDown) return;
+  brainBusy=true;
+  targets.forEach(t=>t.s.thinking=true);
+  const t0=performance.now();
+  try{
+    const payload={states:targets.map(({s,plan})=>{
+      const food=nearestFood(s.body[0]);
+      const crit={};
+      for(const a of plan.offered) crit[a]=`Move ${a} to ${JSON.stringify([s.body[0][0]+DR[a], s.body[0][1]+DC[a]])}.`;
+      return {id:s.name, state:snakeStateText(s,food),
+              questions:{action:{type:'choice', instructions:COMPOSED_INSTR, criteria:crit}}};
+    })};
+    const res=await fetch('/api/evaluate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    lastLat=(performance.now()-t0)/1000; fwdCount++;
+    for(const row of data.states){
+      const s=snakes.find(x=>x.name===row.id); if(!s) continue;
+      const probs=row.answers.action.probabilities;
+      s.probs={probs, ts:performance.now()};
+      const chosen=Object.keys(probs).reduce((m,a)=>probs[a]>probs[m]?a:m);
+      s.intent={action:chosen, direct:false};
+      s.thinking=false;
+    }
+    renderBrain();
+  }catch(err){
+    apiDown=true; toast('模型服务不可达,AI 暂由规划器代管:'+err.message, 5000);
+    targets.forEach(t=>t.s.thinking=false);
+    setTimeout(()=>apiDown=false, 8000);
+  }
+  brainBusy=false;
+}
+
+/* ---------- 每 tick 移动 ---------- */
+function stepGame(){
+  if(paused) return;
+  tick++;
+  const order=snakes.slice().sort((a,b)=>(b.isHuman?1:0)-(a.isHuman?1:0)); // 人先走
+  for(const s of order){
+    if(!s.alive){
+      if(performance.now()>=s.respawnAt) respawn(s);
+      continue;
+    }
+    let action;
+    if(s.isHuman){
+      action=s.queued;
+    }else{
+      const plan=planCandidates(s);
+      if(!plan.offered.length){ kill(s); continue; }           // 无路可走
+      if(s.intent && !s.intent.direct && !fatalNow(s, s.intent.action) && plan.offered.includes(s.intent.action)){
+        action=s.intent.action;                                 // 模型之选(仍有效)
+      }else{
+        action=plan.offered[0];                                 // 规划器代管/直接执行
+      }
+    }
+    if(s.body.length>1 && action===OPPOSITE[s.dir]) action=s.dir;
+    if(fatalNow(s,action)){ kill(s); if(s.isHuman) {} continue; }
+    // 执行
+    const head=s.body[0], hr=head[0]+DR[action], hc=head[1]+DC[action];
+    const fi=foods.findIndex(f=>f[0]===hr&&f[1]===hc);
+    if(fi>=0){ foods.splice(fi,1); s.body.unshift([hr,hc]); s.score++; addFood(); }
+    else { s.body.unshift([hr,hc]); s.body.pop(); }
+    s.dir=action;
+  }
+  updateBoard();
+  document.getElementById('stTick').textContent=tick;
+  document.getElementById('stLat').textContent=lastLat?lastLat.toFixed(2)+'s':'–';
+  document.getElementById('stFwd').textContent=fwdCount;
+}
+function kill(s){
+  s.alive=false; s.deaths++; s.respawnAt=performance.now()+2500; s.intent=null; s.probs=null;
+  for(let i=0;i<s.body.length;i+=2){                            // 尸体化作食物
+    if(foods.length<10 && !occupied(s.body[i][0],s.body[i][1])) foods.push([s.body[i][0],s.body[i][1]]);
+  }
+  if(s.isHuman) showOverlay('你死了','得分 '+s.score+' · 2.5 秒后重生(分数保留)');
+}
+function respawn(s){
+  for(let tries=0;tries<200;tries++){
+    const r=2+Math.floor(Math.random()*(SIZE-4)), c=2+Math.floor(Math.random()*(SIZE-6));
+    const cells=[[r,c],[r,c+1],[r,c+2]];
+    const far=snakes.every(o=>!o.alive||o===s||Math.abs(o.body[0][0]-r)+Math.abs(o.body[0][1]-c)>=5);
+    if(far&&cells.every(([rr,cc])=>!occupied(rr,cc))){
+      s.body=cells; s.dir='west'; s.queued='west'; s.alive=true; s.intent=null; hideOverlayIfHuman(s);
+      return;
+    }
+  }
+  s.respawnAt=performance.now()+1500;
+}
+function hideOverlayIfHuman(s){ if(s.isHuman) hideOverlay(); }
+
+/* ---------- 渲染 ---------- */
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+let cellPx=26, dpr=1;
+function fitCanvas(){
+  const w=Math.min(document.getElementById('stage').clientWidth, 700);
+  cellPx=Math.max(12,Math.floor(w/SIZE)); dpr=window.devicePixelRatio||1;
+  cv.style.width=(cellPx*SIZE)+'px'; cv.style.height=(cellPx*SIZE)+'px';
+  cv.width=cellPx*SIZE*dpr; cv.height=cellPx*SIZE*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function draw(){
+  ctx.clearRect(0,0,cellPx*SIZE,cellPx*SIZE);
+  ctx.fillStyle='#0e121b'; ctx.fillRect(0,0,cellPx*SIZE,cellPx*SIZE);
+  ctx.strokeStyle='rgba(148,163,184,0.05)'; ctx.lineWidth=1;
+  for(let i=1;i<SIZE;i++){ ctx.beginPath();ctx.moveTo(i*cellPx,0);ctx.lineTo(i*cellPx,cellPx*SIZE);ctx.stroke();
+                           ctx.beginPath();ctx.moveTo(0,i*cellPx);ctx.lineTo(cellPx*SIZE,i*cellPx);ctx.stroke(); }
+  // 食物
+  const pulse=0.5+0.5*Math.sin(performance.now()/260);
+  for(const f of foods){
+    ctx.beginPath(); ctx.arc(f[1]*cellPx+cellPx/2, f[0]*cellPx+cellPx/2, cellPx*(0.28+pulse*0.06),0,7);
+    ctx.fillStyle='#ef4444'; ctx.fill();
+    ctx.beginPath(); ctx.arc(f[1]*cellPx+cellPx/2, f[0]*cellPx+cellPx/2, cellPx*(0.40+pulse*0.10),0,7);
+    ctx.strokeStyle='rgba(239,68,68,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+  // 蛇
+  for(const s of snakes){
+    if(!s.alive) continue;
+    for(let i=s.body.length-1;i>=0;i--){
+      const [r,c]=s.body[i];
+      ctx.fillStyle=s.color;
+      ctx.globalAlpha=i===0?1:Math.max(0.35, 1-i*0.045);
+      roundRect(c*cellPx+1.5, r*cellPx+1.5, cellPx-3, cellPx-3, 4); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    // 眼睛
+    const h=s.body[0], hr=h[0]+DR[s.dir]*0.18, hc2=h[1]+DC[s.dir]*0.18;
+    const px=DR[s.dir]?0.2:0, py=DC[s.dir]?0.2:0;
+    ctx.fillStyle='#0b0e14';
+    ctx.beginPath(); ctx.arc((hc2+px)*cellPx+cellPx/2, (hr+py)*cellPx+cellPx/2, cellPx*0.07,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc((hc2-px)*cellPx+cellPx/2, (hr-py)*cellPx+cellPx/2, cellPx*0.07,0,7); ctx.fill();
+    // AI 概率悬浮条
+    if(!s.isHuman && s.probs && performance.now()-s.probs.ts<4000){
+      drawProbBars(s);
+    }
+  }
+  requestAnimationFrame(draw);
+}
+function drawProbBars(s){
+  const probs=s.probs.probs;
+  const keys=Object.keys(probs);
+  const maxV=Math.max(...keys.map(a=>probs[a]),0.0001);
+  const bw=Math.min(10, cellPx*0.42), gap=2;
+  const totalW=keys.length*bw+(keys.length-1)*gap;
+  const x0=s.body[0][1]*cellPx+cellPx/2-totalW/2;
+  let y0=s.body[0][0]*cellPx-10;
+  if(y0<26) y0=s.body[0][0]*cellPx+cellPx+26;
+  const chosen=s.intent&&!s.intent.direct?s.intent.action:null;
+  for(let i=0;i<keys.length;i++){
+    const a=keys[i], h=4+16*(probs[a]/maxV);
+    const x=x0+i*(bw+gap);
+    ctx.fillStyle='rgba(11,14,20,0.75)';
+    roundRect(x-1, y0-h-1, bw+2, h+2, 2); ctx.fill();
+    ctx.fillStyle=chosen===a?'#fff':hexA(s.color,0.75);
+    roundRect(x, y0-h, bw, h, 2); ctx.fill();
+    ctx.fillStyle='rgba(219,226,238,0.9)'; ctx.font='8px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(a[0].toUpperCase(), x+bw/2, y0+8);
+  }
+}
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function hexA(hex,a){ const n=parseInt(hex.slice(1),16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+
+/* ---------- 面板 ---------- */
+function updateBoard(){
+  const tb=document.getElementById('board');
+  const sorted=snakes.slice().sort((a,b)=>b.score-a.score);
+  tb.innerHTML=sorted.map(s=>{
+    const status=!s.alive?(s.isHuman?'重生中':'阵亡 '+s.deaths+' 次'):(s.thinking?'思考中':'存活');
+    return `<tr${s.alive?'':' class="dead"'}><td><span class="swatch" style="background:${s.color}"></span>${s.name}</td>
+      <td>${s.score}</td><td>${s.alive?s.body.length:'–'}</td><td>${status}</td></tr>`;
+  }).join('');
+}
+function renderBrain(){
+  const el=document.getElementById('brain');
+  el.innerHTML=snakes.filter(s=>!s.isHuman).map(s=>{
+    if(!s.probs) return `<div class="brow"><span class="nm" style="color:${s.color}">${s.name}</span><span class="chip">等待推理</span></div>`;
+    const probs=s.probs.probs, keys=Object.keys(probs);
+    const chosen=s.intent&&!s.intent.direct?s.intent.action:null;
+    const fresh=performance.now()-s.probs.ts<5000;
+    const rows=keys.map(a=>`
+      <div class="barRow${a===chosen?' chosen':''}">
+        <span class="lbl">${a[0].toUpperCase()}</span>
+        <div class="barTrack"><div class="barFill" style="width:${(probs[a]*100).toFixed(0)}%;background:${a===chosen?s.color:hexA(s.color,0.4)}"></div></div>
+        <span class="pct">${(probs[a]*100).toFixed(0)}%</span>
+      </div>`).join('');
+    return `<div class="brow"><span class="nm" style="color:${s.color}">${s.name}</span>
+      <span class="chip">${fresh?(chosen?'模型之选: '+chosen:''):'(已过期,规划器代管)'}</span></div>${rows}`;
+  }).join('');
+}
+function showOverlay(t,sub){ const o=document.getElementById('overlay');
+  o.classList.add('show'); document.getElementById('ovTitle').textContent=t; document.getElementById('ovSub').textContent=sub||''; }
+function hideOverlay(){ document.getElementById('overlay').classList.remove('show'); }
+let toastTimer=null;
+function toast(msg,ms=3000){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms); }
+
+/* ---------- 输入与控制 ---------- */
+const KEYMAP={ArrowUp:'north',KeyW:'north',ArrowDown:'south',KeyS:'south',ArrowLeft:'west',KeyA:'west',ArrowRight:'east',KeyD:'east'};
+window.addEventListener('keydown',e=>{
+  if(KEYMAP[e.code]){
+    e.preventDefault();
+    const h=snakes.find(s=>s.isHuman);
+    if(h&&h.alive){ const want=KEYMAP[e.code];
+      if(h.body.length<2||want!==OPPOSITE[h.dir]) h.queued=want; }
+  }else if(e.code==='KeyP'){ togglePause(); }
+  else if(e.code==='KeyR'){ restart(); }
+});
+function togglePause(){ paused=!paused;
+  document.getElementById('btnPause').textContent=paused?'▶ 继续 (P)':'⏸ 暂停 (P)';
+  if(paused) showOverlay('已暂停','按 P 继续'); else hideOverlay(); }
+function restart(){ resetGame(); toast('新对局开始'); }
+document.getElementById('btnPause').addEventListener('click',togglePause);
+document.getElementById('btnRestart').addEventListener('click',restart);
+document.getElementById('inAI').addEventListener('change',restart);
+document.getElementById('inSpeed').addEventListener('change',e=>{
+  tickMs=+e.target.value; clearInterval(timer); timer=setInterval(stepGame,tickMs); });
+
+/* ---------- 启动 ---------- */
+window.__game = { // 只读调试钩子
+  get snakes(){return snakes}, get foods(){return foods}, get tick(){return tick}, get paused(){return paused}
+};
+resetGame();
+fitCanvas(); window.addEventListener('resize',fitCanvas);
+requestAnimationFrame(draw);
+timer=setInterval(stepGame,tickMs);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) draw(); }); // 后台 rAF 暂停,回前台立即补一帧
+setInterval(brainLoop,180);
+setInterval(renderBrain,1000);
+setTimeout(()=>toast('方向键/WASD 开跑!金色是你'),800);
+</script>
+</body>
+</html>

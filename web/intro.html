@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NanoJev 视频卡片</title>
+<style>
+  html,body{margin:0;padding:0;background:#0b0e14;height:100%;overflow:hidden}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script>
+'use strict';
+/* 竖屏动画卡片:URL 参数 scene=1|2|3|6, dur=毫秒。
+   自带 worker 驱动渲染(不受后台节流影响)+ MediaRecorder 录制管线。 */
+const qs = new URLSearchParams(location.search);
+const SCENE = qs.get('scene') || '1';
+const DUR = parseFloat(qs.get('dur') || '6000');
+const W = 1080, H = 1920;
+const cv = document.getElementById('cv');
+cv.width = W; cv.height = H;
+const ctx = cv.getContext('2d');
+const GOLD = '#facc15', DIM = '#7d8798', TXT = '#dbe2ee', GREEN = '#4ade80', RED = '#f87171', CYAN = '#22d3ee';
+const FONT = '"Microsoft YaHei","PingFang SC",sans-serif';
+const T0 = performance.now();
+const now = () => (performance.now() - T0) / 1000;   // 场景内秒数
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const ease = t => t<0?0:t>1?1:1-Math.pow(1-t,3);      // easeOutCubic
+
+function fadeIn(t, a, b){ return ease(clamp01((t-a)/(b-a))); }
+function bg(){
+  ctx.fillStyle = '#0b0e14'; ctx.fillRect(0,0,W,H);
+  const g = ctx.createRadialGradient(W/2, H*0.42, 80, W/2, H*0.42, 900);
+  g.addColorStop(0, 'rgba(56,72,110,0.20)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+}
+function text(str, x, y, size, color, align='center', alpha=1, weight='700'){
+  ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.font = `${weight} ${size}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.fillText(str, x, y); ctx.globalAlpha = 1;
+}
+/* 进度条组:bars=[[label,p,color]] */
+function probBars(x, y, w, bars, reveal, barH=26, gap=44){
+  for(let i=0;i<bars.length;i++){
+    const [label, p, color] = bars[i];
+    const rv = ease(clamp01((reveal - i*0.18)/0.5));
+    text(label, x-28, y + i*gap + barH/2, 34, DIM, 'right');
+    ctx.fillStyle = '#1a2030';
+    ctx.fillRect(x, y + i*gap, w, barH);
+    if(rv>0){ ctx.fillStyle = color; ctx.fillRect(x, y + i*gap, w*p*rv, barH); }
+    if(rv>0.5) text((p*100).toFixed(0)+'%', x + w*p*rv + 66, y + i*gap + barH/2, 28, color, 'left');
+  }
+}
+function chip(str, x, y, alpha=1, color=DIM){
+  ctx.globalAlpha = alpha;
+  ctx.font = `500 30px ${FONT}`;
+  const w = ctx.measureText(str).width + 48;
+  ctx.strokeStyle = '#2a3245'; ctx.lineWidth = 2;
+  roundRect(x - w/2, y - 28, w, 56, 28); ctx.stroke();
+  text(str, x, y, 30, color, 'center', alpha, '500');
+  ctx.globalAlpha = 1;
+}
+function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function checkLine(str, x, y, alpha){
+  if(alpha<=0) return;
+  ctx.globalAlpha = alpha; ctx.strokeStyle = GREEN; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(x, y-4); ctx.lineTo(x+20, y+16); ctx.lineTo(x+56, y-26); ctx.stroke();
+  text(str, x+92, y, 42, TXT, 'left', alpha);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- 场景 1:开场钩子(5.87s) ---------- */
+function scene1(t){
+  bg();
+  // 网格底纹
+  ctx.strokeStyle = 'rgba(148,163,184,0.05)'; ctx.lineWidth = 1;
+  for(let i=0;i<12;i++){ ctx.beginPath(); ctx.moveTo(0, i*160+80); ctx.lineTo(W, i*160+80); ctx.stroke(); }
+  const a1 = fadeIn(t, 0.15, 0.9);
+  text('AI 贪吃蛇大乱斗', W/2, 760, 104, GOLD, 'center', a1);
+  const a2 = fadeIn(t, 0.7, 1.4);
+  text('你  vs  NanoJev', W/2, 910, 56, TXT, 'center', a2, '500');
+  // 打字机钩子句
+  const hook = '每一步,都是 AI 现场算出来的概率';
+  const chars = Math.floor(clamp01((t-1.5)/2.2) * hook.length);
+  const a3 = fadeIn(t, 1.4, 1.6);
+  text(hook.slice(0, chars) + (t%0.8<0.4 && chars<hook.length ? '▍':''), W/2, 1060, 48, TXT, 'center', a3, '500');
+  if(chars>=hook.length){ const a4=fadeIn(t,3.9,4.5); chip('一次前向 · 0.2 秒 / 步', W/2, 1220, a4, GOLD); }
+  // 底部演示概率条
+  const bars=[['北',0.12,CYAN],['东',0.83,GREEN],['南',0.03,RED],['西',0.02,RED]];
+  const rv = fadeIn(t, 2.4, 3.4);
+  if(rv>0){ ctx.globalAlpha = rv*0.9; probBars(W/2-190, 1440, 380, bars, rv*4); ctx.globalAlpha=1;
+    text('模型输出的方向概率(示例)', W/2, 1400, 30, DIM, 'center', rv, '500'); }
+}
+
+/* ---------- 场景 2:玩法卡(11.10s) ---------- */
+function scene2(t){
+  bg();
+  text('怎 么 玩', W/2, 300, 88, GOLD, 'center', fadeIn(t, 0.1, 0.7));
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.globalAlpha = fadeIn(t,0.4,1.0);
+  ctx.beginPath(); ctx.moveTo(W/2-140, 372); ctx.lineTo(W/2+140, 372); ctx.stroke(); ctx.globalAlpha = 1;
+  const items = [
+    ['①', '你是金色的蛇,方向键控制', HUMANLINE],
+    ['②', '四条 NanoJev AI 蛇同场抢食', null],
+    ['③', '蛇头悬浮条 = 模型的方向概率', null],
+    ['④', '代码防撞墙,模型选方向', null],
+  ];
+  function HUMANLINE(){}
+  for(let i=0;i<4;i++){
+    const a = fadeIn(t, 0.9 + i*1.35, 1.7 + i*1.35);
+    if(a<=0) continue;
+    const y = 560 + i*190;
+    ctx.globalAlpha = a*0.35; ctx.fillStyle = '#161d2b';
+    roundRect(120, y-70, W-240, 140, 24); ctx.fill(); ctx.globalAlpha = 1;
+    text(items[i][0], 190, y, 52, GOLD, 'center', a);
+    text(items[i][1], 260, y, 46, TXT, 'left', a, '500');
+  }
+  // 迷你棋盘演示:一条蛇走向食物
+  const a5 = fadeIn(t, 6.4, 7.4);
+  if(a5>0){
+    ctx.globalAlpha = a5;
+    const cx = W/2, cy = 1420, cell = 74;
+    ctx.strokeStyle = 'rgba(148,163,184,0.12)'; ctx.lineWidth = 1;
+    for(let i=0;i<=6;i++){ ctx.beginPath(); ctx.moveTo(cx-3*cell, cy-2*cell+i*cell); ctx.lineTo(cx+3*cell, cy-2*cell+i*cell); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx-3*cell+i*cell, cy-2*cell); ctx.lineTo(cx-3*cell+i*cell, cy+4*cell-0); ctx.stroke(); }
+    // 蛇头沿路径移动
+    const prog = clamp01((t-7.2)/2.6) * 4;
+    const px = cx - 2.5*cell + prog*cell;
+    ctx.fillStyle = GOLD; ctx.beginPath(); ctx.arc(px, cy+1.5*cell, cell*0.34, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(cx+2.5*cell, cy+1.5*cell, cell*0.26+3*Math.sin(t*5), 0, 7); ctx.fill();
+    // 头顶概率条
+    const bp = 0.55 + 0.45*Math.abs(Math.sin(t*2.2));
+    ctx.fillStyle = '#1a2030'; ctx.fillRect(px-60, cy+1.5*cell-92, 120, 12);
+    ctx.fillStyle = GREEN; ctx.fillRect(px-60, cy+1.5*cell-92, 120*bp, 12);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- 场景 3:Jev 概念动画(23.92s) ---------- */
+function scene3(t){
+  bg();
+  // 0-1s 标题
+  const aT = fadeIn(t, 0.1, 0.8);
+  text('Jev · 系统一模型', W/2, 240, 84, GOLD, 'center', aT);
+  text('System One Model', W/2, 340, 36, DIM, 'center', fadeIn(t,0.5,1.1), '500');
+  const q = fadeIn(t, 1.2, 1.8);
+  text('问:下一步往哪儿走?', W/2, 470, 52, TXT, 'center', q, '500');
+  // 左右对比卡 2s 起
+  const aL = fadeIn(t, 2.2, 3.0), aR = fadeIn(t, 2.6, 3.4);
+  if(aL>0){
+    ctx.globalAlpha = aL*0.5; ctx.fillStyle = '#161d2b'; roundRect(80, 560, 440, 620, 28); ctx.fill();
+    ctx.globalAlpha = aL; ctx.strokeStyle = '#2a3245'; ctx.lineWidth=2; roundRect(80, 560, 440, 620, 28); ctx.stroke();
+    text('普通 AI', 300, 630, 46, DIM, 'center', aL);
+    ctx.globalAlpha = 1;
+    // 打字机:一字一字往外蹦
+    const s = '我觉得…应该…往…左边…走…';
+    const n = Math.floor(clamp01((t-3.4)/6.5) * s.length);
+    ctx.globalAlpha = aL;
+    text(s.slice(0,n) + (n<s.length && t%0.5<0.25?'…':''), 300, 800, 40, TXT, 'center', aL, '500');
+    text('一个 token 一个 token 生成', 300, 1080, 28, DIM, 'center', aL*fadeIn(t,8.5,9.5), '500');
+    ctx.globalAlpha = 1;
+  }
+  if(aR>0){
+    ctx.globalAlpha = aR*0.5; ctx.fillStyle = '#14231c'; roundRect(560, 560, 440, 620, 28); ctx.fill();
+    ctx.globalAlpha = aR; ctx.strokeStyle = '#2f6e4b'; ctx.lineWidth=2; roundRect(560, 560, 440, 620, 28); ctx.stroke();
+    text('Jev', 780, 630, 46, GREEN, 'center', aR);
+    ctx.globalAlpha = 1;
+    if(t>4.2){ // 瞬间出全分布
+      const rv = clamp01((t-4.2)/0.5);
+      ctx.globalAlpha = aR;
+      probBars(640, 740, 280, [['左',0.97,GREEN],['右',0.03,RED]], rv*2.2, 24, 52);
+      text('一次前向 · 完整概率', 780, 1080, 28, GREEN, 'center', aR*fadeIn(t,4.6,5.4), '500');
+      ctx.globalAlpha = 1;
+    }
+  }
+  // 10s:零解码
+  const aZ = fadeIn(t, 10.6, 11.6);
+  if(aZ>0){
+    text('不生成任何文字', W/2, 1300, 62, TXT, 'center', aZ);
+    text('零解码延迟', W/2, 1390, 62, GOLD, 'center', fadeIn(t,11.2,12.2));
+    text('像人的直觉:不用想,抬手就知道', W/2, 1490, 40, DIM, 'center', fadeIn(t,12.2,13.2), '500');
+  }
+  // 15s:NanoJev 介绍
+  const aN = fadeIn(t, 15.4, 16.4);
+  if(aN>0){
+    ctx.globalAlpha = aN*0.5; ctx.fillStyle='#161d2b'; roundRect(100, 1560, W-200, 260, 28); ctx.fill();
+    ctx.globalAlpha = aN; ctx.strokeStyle='#2a3245'; ctx.lineWidth=2; roundRect(100, 1560, W-200, 260, 28); ctx.stroke();
+    text('NanoJev · 开源复刻', W/2, 1630, 50, GOLD, 'center', aN);
+    text('Qwen3-0.6B 底座 + 决策头 · 一张显卡就能跑', W/2, 1710, 36, TXT, 'center', fadeIn(t,16.2,17.2), '500');
+    const chips=['多状态并行','动态候选 2-255','Choice·Boolean·Score'];
+    for(let i=0;i<3;i++) chip(chips[i], W/2+(i-1)*330, 1780, fadeIn(t,17.2+i*0.4,17.9+i*0.4));
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- 场景 6:总结卡(10.5s) ---------- */
+function scene6(t){
+  bg();
+  text('总 结', W/2, 300, 92, GOLD, 'center', fadeIn(t, 0.1, 0.7));
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.globalAlpha = fadeIn(t,0.4,1.0);
+  ctx.beginPath(); ctx.moveTo(W/2-120, 376); ctx.lineTo(W/2+120, 376); ctx.stroke(); ctx.globalAlpha = 1;
+  const lines = [
+    '不说话的 AI:直接输出概率分布',
+    '0.6B 单卡可跑 · 实测 27 食物存活',
+    '代码 + 模型混合决策,能玩能围观',
+  ];
+  for(let i=0;i<3;i++) checkLine(lines[i], 170, 580 + i*170, fadeIn(t, 0.9+i*1.1, 1.8+i*1.1));
+  // 尾板 5s 起
+  const aE = fadeIn(t, 5.0, 5.8);
+  if(aE>0){
+    ctx.globalAlpha = aE*0.6; ctx.fillStyle = '#14231c';
+    roundRect(120, 1120, W-240, 460, 32); ctx.fill();
+    ctx.globalAlpha = aE; ctx.strokeStyle = GOLD; ctx.lineWidth = 3;
+    roundRect(120, 1120, W-240, 460, 32); ctx.stroke();
+    text('开 源 地 址', W/2, 1210, 40, DIM, 'center', aE, '500');
+    text('github.com/TianyuCodings/NanoJev', W/2, 1300, 44, GOLD, 'center', aE, '600');
+    text('也放在评论区置顶', W/2, 1390, 34, TXT, 'center', aE, '500');
+    text('NanoJev · Jev 开源复刻 · 本地实测', W/2, 1500, 28, DIM, 'center', aE, '500');
+    ctx.globalAlpha = 1;
+  }
+}
+
+const SCENES = {1: scene1, 2: scene2, 3: scene3, 6: scene6};
+
+/* ---------- worker 驱动渲染 + 录制 ---------- */
+const workerSrc = 'setInterval(()=>postMessage(0),33);';
+window.__wk = new Worker(URL.createObjectURL(new Blob([workerSrc], {type:'text/javascript'})));
+window.__frames = 0;
+window.__wk.onmessage = () => {
+  window.__frames++;
+  const t = now();
+  (SCENES[SCENE] || scene1)(t);
+  try{ window.__track && window.__track.requestFrame(); }catch(e){}
+};
+// 录制管线(自动化通过 __startRec 控制;也可 URL 带 auto=1 自动录)
+const stream = cv.captureStream(0);
+window.__track = stream.getVideoTracks()[0];
+window.__startRec = (ms) => {
+  const mr = new MediaRecorder(stream, {mimeType:'video/webm;codecs=vp9', videoBitsPerSecond: 9000000});
+  const chunks=[]; mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  mr.onstop=()=>{ window.__recB64=null;
+    const blob=new Blob(chunks,{type:'video/webm'});
+    const fr=new FileReader();
+    fr.onload=()=>{ window.__recB64=fr.result.split(',')[1]; window.__recSize=blob.size; };
+    fr.readAsDataURL(blob); };
+  mr.start(500); window.__mr=mr;
+  setTimeout(()=>{ try{ if(window.__mr.state!=='inactive') window.__mr.stop(); }catch(e){} }, ms);
+};
+window.__autoStart = () => { window.__startRec(DUR); return DUR; };
+</script>
+</body>
+</html>

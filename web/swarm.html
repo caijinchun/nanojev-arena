@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>百人求生 · NanoJev 群体决策模拟器</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#12161f; --line:#232a38; --txt:#dbe2ee; --dim:#7d8798;
+    --green:#4ade80; --orange:#fb923c; --red:#f87171; --gold:#facc15;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  body{background:var(--bg); color:var(--txt); font:14px/1.5 "Segoe UI",system-ui,sans-serif; min-height:100vh}
+  header{padding:14px 20px 10px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline}
+  h1{font-size:19px; font-weight:700}
+  h1 em{font-style:normal; color:var(--gold)}
+  header .sub{color:var(--dim); font-size:12.5px}
+  main{display:flex; gap:14px; padding:14px 20px; align-items:flex-start; flex-wrap:wrap}
+  #stage{position:relative; flex:1 1 640px; min-width:340px; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  canvas{display:block; width:100%; cursor:crosshair}
+  #statusBar{position:absolute; left:0; right:0; bottom:0; padding:6px 12px; background:rgba(8,10,15,.78); border-top:1px solid var(--line); font-size:12.5px; color:var(--dim); display:flex; gap:16px; flex-wrap:wrap}
+  #statusBar b{color:var(--txt); font-weight:600}
+  aside{flex:0 0 300px; display:flex; flex-direction:column; gap:12px; min-width:280px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px}
+  .card h2{font-size:13px; color:var(--dim); font-weight:600; letter-spacing:.08em; margin-bottom:8px}
+  .row{display:flex; align-items:center; gap:8px; margin:6px 0; flex-wrap:wrap}
+  .row label{font-size:12.5px; color:var(--dim); flex:0 0 auto}
+  button{background:#1b2130; color:var(--txt); border:1px solid var(--line); border-radius:7px; padding:6px 12px; font-size:13px; cursor:pointer}
+  button:hover{border-color:#3a4459}
+  button.primary{background:#1f3a2b; border-color:#2f6e4b}
+  button.warn{background:#3a2525; border-color:#6e2f2f}
+  select,input[type=number]{background:#171c27; color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:4px 6px; font-size:13px}
+  input[type=range]{flex:1; accent-color:var(--gold)}
+  .val{font-variant-numeric:tabular-nums; color:var(--txt); min-width:34px; text-align:right; font-size:12.5px}
+  .teams{display:flex; gap:10px}
+  .team{flex:1; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12.5px}
+  .team .name{font-weight:700; font-size:13px}
+  .team.g .name{color:var(--green)} .team.o .name{color:var(--orange)}
+  .team .n{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums}
+  .team .meta{color:var(--dim); font-size:11.5px}
+  .legend{font-size:12px; color:var(--dim); line-height:1.8}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:3px; vertical-align:-1px; margin-right:5px}
+  #toast{position:fixed; top:18px; left:50%; transform:translateX(-50%); background:#1f3a2b; border:1px solid #2f6e4b; color:var(--txt); padding:10px 22px; border-radius:9px; font-size:14px; opacity:0; pointer-events:none; transition:opacity .3s; z-index:10}
+  #toast.show{opacity:1}
+  .note{font-size:11.5px; color:var(--dim); line-height:1.55}
+</style>
+</head>
+<body>
+<header>
+  <h1>百人求生 <em>·</em> NanoJev 群体决策模拟器</h1>
+  <div class="sub">每个 agent 只看 5×5 局部窗 · 4 个 boolean 方向安全题 · 每批 20 人一次前向出全分布 · 零 token 解码</div>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="statusBar">
+      <span>Tick <b id="stTick">0</b></span>
+      <span>本拍推理 <b id="stLat">–</b>(<b id="stBatch">–</b> 次前向)</span>
+      <span>在场 <b id="stAlive">–</b> 人</span>
+      <span id="stMode">运行中</span>
+    </div>
+  </div>
+  <aside>
+    <div class="card">
+      <h2>队伍比分(先到 25 逃脱)</h2>
+      <div class="teams">
+        <div class="team g">
+          <div class="name">绿队 · 贪心</div>
+          <div class="n" id="scoreG">0</div>
+          <div class="meta">碰撞 <span id="colG">0</span> · 卡住 <span id="stuckG">0</span><br>argmax(模型概率)+ 记忆</div>
+        </div>
+        <div class="team o">
+          <div class="name">橙队 · 采样</div>
+          <div class="n" id="scoreO">0</div>
+          <div class="meta">碰撞 <span id="colO">0</span> · 卡住 <span id="stuckO">0</span><br>按概率分布 T=1 抽样</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>模拟参数(改动后点「重置」生效)</h2>
+      <div class="row"><label>人数</label><input type="range" id="inCount" min="10" max="100" step="2" value="40"><span class="val" id="valCount">40</span></div>
+      <div class="row"><label>迷宫</label>
+        <select id="inSize">
+          <option value="30">30×30</option>
+          <option value="40">40×40</option>
+          <option value="50" selected>50×50</option>
+        </select>
+        <select id="inTopo">
+          <option value="obstacle" selected>随机障碍</option>
+          <option value="tree">树形走廊</option>
+        </select>
+      </div>
+      <div class="row"><label>额外步进间隔</label><input type="range" id="inDelay" min="0" max="4000" step="100" value="400"><span class="val" id="valDelay">0.4s</span></div>
+      <div class="row">
+        <button class="primary" id="btnPause">⏸ 暂停</button>
+        <button id="btnReset">↺ 重置</button>
+        <button id="btnNew">🎲 再生成</button>
+      </div>
+      <div class="row"><label>编辑:点击/拖动画布</label>
+        <label style="cursor:pointer"><input type="radio" name="edit" value="off" checked> 关</label>
+        <label style="cursor:pointer"><input type="radio" name="edit" value="wall"> 画墙</label>
+        <label style="cursor:pointer"><input type="radio" name="edit" value="erase"> 擦墙</label>
+      </div>
+    </div>
+    <div class="card">
+      <h2>图例</h2>
+      <div class="legend">
+        <span class="dot" style="background:#4ade80"></span>绿队 agent(argmax)<br>
+        <span class="dot" style="background:#fb923c"></span>橙队 agent(按分布抽样)<br>
+        <span class="dot" style="background:#facc15"></span>出口(到达即计分并重生)<br>
+        <span class="dot" style="background:linear-gradient(90deg,#f87171,#4ade80)"></span>热力图:模型对本格「可进入」概率的红绿场<br>
+        <span class="dot" style="background:#f87171"></span>红圈 = 本拍撞墙(执行时证伪)
+      </div>
+    </div>
+    <div class="card">
+      <h2>说明</h2>
+      <div class="note">
+        模型是<b>NanoJev local_atomic_seed17</b>(Qwen3-0.6B 底座 + 决策头),只输入每个 agent 的 5×5 ASCII 局部窗,
+        一次前向并行输出所有方向的完整概率分布——没有生成 token,也没有全局地图。
+        路线选择、碰撞记忆、重生由页面代码完成:模型判断「能不能走」,代码决定「往哪走」。
+        画一堵墙,下一拍整片概率场就会重排。
+      </div>
+    </div>
+  </aside>
+</main>
+<div id="toast"></div>
+<script>
+'use strict';
+/* ---------- 与训练数据严格一致的输入格式(来自 scripts/evaluate_composed_maze.py) ---------- */
+const DIRNAMES = ['north','east','south','west'];
+const DIRS = {north:[-1,0], east:[0,1], south:[1,0], west:[0,-1]};
+const DELTA_TEXT = {north:'row minus one, same column', east:'same row, column plus one',
+                    south:'row plus one, same column', west:'same row, column minus one'};
+const QUESTIONS = {};
+for (const a of DIRNAMES){
+  QUESTIONS['clear_'+a] = {
+    type:'boolean',
+    instructions:`If the agent attempts one cell ${a} (${DELTA_TEXT[a]}), will the destination be inside the maze and not a wall? Use the local map: '.' and 'A' are traversable, '#' is a wall, and 'X' is outside the maze.`,
+    criteria:{true:`The destination of the one-cell ${a} attempt is inside the maze and traversable.`,
+              false:`The destination of the one-cell ${a} attempt is a wall or outside the maze.`}
+  };
+}
+function renderStateText(r,c){
+  const R=2, lines=[];
+  for(let rr=r-R; rr<=r+R; rr++){
+    let line='';
+    for(let cc=c-R; cc<=c+R; cc++){
+      let ch;
+      if(!(rr>=0&&rr<N&&cc>=0&&cc<N)) ch='X';
+      else if(rr===r&&cc===c) ch='A';
+      else ch = wall[rr][cc] ? '#' : '.';
+      line+=ch;
+    }
+    lines.push(line);
+  }
+  return `Agent coordinate: (${r},${c}); zero-based row and column. Rows increase south; columns increase east. The local window is centered on A. '#': wall; '.': open; 'A': agent; 'X': outside.\nLocal map:\n${lines.join('\n')}`;
+}
+
+/* ---------- 迷宫 ---------- */
+let N=50, wall=[], spawnCells=[], goal=[0,0], seed=0;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function largestComponent(open){
+  const comp=Array.from({length:N},()=>new Array(N).fill(-1)); let k=0; const sizes=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    if(!open[r][c]||comp[r][c]>=0) continue;
+    let cnt=0; const q=[[r,c]]; comp[r][c]=k;
+    while(q.length){const [rr,cc]=q.pop(); cnt++;
+      for(const d of DIRNAMES){const nr=rr+DIRS[d][0],nc=cc+DIRS[d][1];
+        if(nr>=0&&nr<N&&nc>=0&&nc<N&&open[nr][nc]&&comp[nr][nc]<0){comp[nr][nc]=k;q.push([nr,nc]);}}}
+    sizes[k++]=cnt;
+  }
+  let best=0; for(let i=1;i<k;i++) if(sizes[i]>sizes[best]) best=i;
+  return {comp,best};
+}
+function genMaze(newSeed){
+  seed=newSeed; wall=Array.from({length:N},()=>new Array(N).fill(true));
+  const rnd=mulberry32(seed);
+  if(document.getElementById('inTopo').value==='tree'){
+    // 随机 DFS 树形走廊:全墙起,挖一条主干+分支
+    const stack=[[1,1]]; wall[1][1]=false;
+    while(stack.length){
+      const [r,c]=stack[stack.length-1];
+      const opts=[];
+      for(const d of DIRNAMES){const nr=r+DIRS[d][0]*2,nc=c+DIRS[d][1]*2;
+        if(nr>0&&nr<N-1&&nc>0&&nc<N-1&&wall[nr][nc]) opts.push([nr,nc,r+DIRS[d][0],c+DIRS[d][1],d]);}
+      if(!opts.length){stack.pop(); continue;}
+      const pick=opts[Math.floor(rnd()*opts.length)];
+      wall[pick[2]][pick[3]]=false; wall[pick[0]][pick[1]]=false; stack.push([pick[0],pick[1]]);
+    }
+  }else{
+    const open=Array.from({length:N},()=>Array.from({length:N},()=>rnd()>=0.30));
+    const {comp,best}=largestComponent(open);
+    for(let r=0;r<N;r++)for(let c=0;c<N;c++) wall[r][c]=!(open[r][c]&&comp[r][c]===best);
+  }
+  // 出口:可通行格里 r+c 最大者
+  let bestSum=-1;
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++) if(!wall[r][c]&&r+c>bestSum){bestSum=r+c; goal=[r,c];}
+  // 出生区:r+c 最小的前 40 个通行格
+  const cells=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++) if(!wall[r][c]) cells.push([r,c]);
+  cells.sort((a,b)=>(a[0]+a[1])-(b[0]+b[1])||a[0]-b[0]);
+  spawnCells=cells.slice(0,40);
+  heat=Array.from({length:N},()=>new Array(N).fill(0.5));
+}
+
+/* ---------- agent ---------- */
+let population=[], nextId=0, teamScore={greedy:0,sample:0}, teamStats={greedy:{col:0,stuck:0},sample:{col:0,stuck:0}};
+function spawnAgent(team){
+  const cell=spawnCells[Math.floor(Math.random()*spawnCells.length)]||goal;
+  return {id:nextId++, team, r:cell[0], c:cell[1], lastDir:null, blocked:new Set(),
+          visited:new Set([cell[0]+','+cell[1]]), p:{}, trail:[], flash:0, stuckTicks:0};
+}
+function resetAgents(){
+  population=[]; nextId=0; teamScore={greedy:0,sample:0}; teamStats={greedy:{col:0,stuck:0},sample:{col:0,stuck:0}};
+  const count=+document.getElementById('inCount').value;
+  for(let i=0;i<count;i++) population.push(spawnAgent(i%2?'sample':'greedy'));
+  winShown=false; tickCount=0;
+}
+
+/* ---------- 推理 ---------- */
+const BATCH=20;
+async function postEval(payload){
+  const res=await fetch('/api/evaluate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(!res.ok){const t=await res.text(); throw new Error('HTTP '+res.status+' '+t.slice(0,200));}
+  return res.json();
+}
+let busy=false, paused=false, tickCount=0, lastLatency=0, winShown=false;
+async function tick(){
+  if(paused||busy) return;
+  busy=true; setMode('推理中…');
+  const t0=performance.now();
+  try{
+    const chunks=[];
+    for(let i=0;i<population.length;i+=BATCH) chunks.push(population.slice(i,i+BATCH));
+    for(let ci=0;ci<chunks.length;ci++){
+      const chunk=chunks[ci];
+      setMode(`推理中… 第 ${ci+1}/${chunks.length} 批`);
+      const resp=await postEval({states:chunk.map(a=>({id:'a'+a.id, state:renderStateText(a.r,a.c), questions:QUESTIONS}))});
+      chunk.forEach((a,i)=>{
+        const ans=resp.states[i].answers;
+        a.p={}; for(const d of DIRNAMES){
+          a.p[d]=ans['clear_'+d].p_true;
+          const nr=a.r+DIRS[d][0], nc=a.c+DIRS[d][1];
+          if(nr>=0&&nr<N&&nc>=0&&nc<N) heatInput(nr,nc,a.p[d],0.22);
+        }
+      });
+    }
+    lastLatency=(performance.now()-t0)/1000;
+    for(const a of population) applyDecision(a);
+    tickCount++;
+    chunksOfLastTick=chunks.length;
+  }catch(err){
+    toast('推理请求失败,已暂停:'+err.message); paused=true; syncPauseBtn();
+  }
+  busy=false;
+  updateStats(chunksOfLastTick);
+  const delay=+document.getElementById('inDelay').value;
+  setTimeout(tick, delay);
+}
+let chunksOfLastTick=1;
+
+/* ---------- 决策(代码规划)+ 执行 ---------- */
+function applyDecision(a){
+  a.flash=Math.max(0,a.flash-1);
+  if(a.trail.length>12) a.trail.shift();
+  a.trail.push([a.r,a.c]);
+  const cand=DIRNAMES.filter(d=>!a.blocked.has(d));
+  let choice=null;
+  if(a.team==='greedy'){
+    let pool=cand.filter(d=>a.p[d]>=0.5);
+    if(!pool.length&&cand.length){ // 模型都说不行:取最高概率硬闯一次
+      pool=[cand.reduce((m,d)=>a.p[d]>a.p[m]?d:m)];
+    }
+    if(pool.length){
+      const rev={north:'south',south:'north',east:'west',west:'east'}[a.lastDir];
+      pool=pool.slice().sort((d1,d2)=>dirScore(a,d2,rev)-dirScore(a,d1,rev));
+      choice=pool[0];
+    }
+  }else{
+    const ws=cand.map(d=>Math.max(a.p[d],1e-3));
+    const total=ws.reduce((x,y)=>x+y,0);
+    if(total>0){
+      let x=Math.random()*total;
+      for(let i=0;i<cand.length;i++){ x-=ws[i]; if(x<=0){choice=cand[i]; break;} }
+      if(!choice) choice=cand[cand.length-1];
+    }
+  }
+  if(!choice){ a.stuckTicks++; teamStats[a.team].stuck++;
+    if(a.stuckTicks>=3){ a.blocked.clear(); a.stuckTicks=0; } // 死局:遗忘碰撞记忆重试
+    return; }
+  const nr=a.r+DIRS[choice][0], nc=a.c+DIRS[choice][1];
+  const openNow = nr>=0&&nr<N&&nc>=0&&nc<N&&!wall[nr][nc];
+  if(openNow){
+    a.r=nr; a.c=nc; a.lastDir=choice; a.stuckTicks=0;
+    a.visited.add(nr+','+nc);
+    if(nr===goal[0]&&nc===goal[1]){
+      teamScore[a.team]++; bursts.push({r:nr,c:nc,t:1,team:a.team});
+      const cell=spawnCells[Math.floor(Math.random()*spawnCells.length)]||[1,1];
+      a.r=cell[0]; a.c=cell[1]; a.blocked.clear(); a.visited=new Set([a.r+','+a.c]); a.trail=[];
+      checkWin();
+    }
+  }else{
+    a.collisions_personal=(a.collisions_personal||0)+1;
+    teamStats[a.team].col++; a.blocked.add(choice); a.flash=2;
+    if(nr>=0&&nr<N&&nc>=0&&nc<N) heatInput(nr,nc,0,0.5); // 撞墙:强红
+  }
+}
+function dirScore(a,d,rev){
+  const nr=a.r+DIRS[d][0], nc=a.c+DIRS[d][1];
+  let s=a.p[d];
+  if(!a.visited.has(nr+','+nc)) s+=0.35;                    // 偏好未探索
+  s-=0.55*((nr-goal[0])**2+(nc-goal[1])**2)/(N*N)*4;        // 较强拉向出口
+  if(d===rev) s-=0.25;                                       // 不爱走回头路
+  s+=((a.id*2654435761>>>8)%1000)/1000*0.02;                 // 稳定微扰打破平局
+  return s;
+}
+function checkWin(){
+  if(winShown) return;
+  if(teamScore.greedy>=25||teamScore.sample>=25){
+    winShown=true;
+    toast((teamScore.greedy>=25?'绿队(贪心)':'橙队(采样)')+' 率先完成 25 次逃脱!比赛继续计数。',5000);
+  }
+}
+
+/* ---------- 热力图 ---------- */
+let heat=[];
+function heatInput(r,c,p,alpha){ heat[r][c]=heat[r][c]*(1-alpha)+p*alpha; }
+
+/* ---------- 渲染 ---------- */
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+let cellPx=10, dpr=1, bursts=[];
+function fitCanvas(){
+  const w=cv.parentElement.clientWidth;
+  cellPx=Math.max(6,Math.floor(w/N)); dpr=window.devicePixelRatio||1;
+  cv.style.width=(cellPx*N)+'px'; cv.style.height=(cellPx*N)+'px'; cv.style.margin='0 auto';
+  cv.width=cellPx*N*dpr; cv.height=cellPx*N*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function heatColor(p){ // p=0 红 → 0.5 暗 → 1 绿
+  const t=Math.max(0,Math.min(1,(p-0.5)*2));
+  const red=Math.max(0,Math.min(1,(0.5-p)*2));
+  if(p>=0.5) return `rgba(74,222,128,${(t*0.42).toFixed(3)})`;
+  return `rgba(248,113,113,${(red*0.55).toFixed(3)})`;
+}
+function draw(){
+  ctx.clearRect(0,0,cellPx*N,cellPx*N);
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    const x=c*cellPx,y=r*cellPx;
+    if(wall[r][c]){ ctx.fillStyle='#2c3547'; ctx.fillRect(x,y,cellPx,cellPx); }
+    else{
+      ctx.fillStyle='#0e121b'; ctx.fillRect(x,y,cellPx,cellPx);
+      const h=heat[r][c];
+      if(Math.abs(h-0.5)>0.06){ ctx.fillStyle=heatColor(h); ctx.fillRect(x,y,cellPx,cellPx); }
+    }
+  }
+  // 出生区微光
+  ctx.fillStyle='rgba(148,163,184,0.05)';
+  for(const [r,c] of spawnCells) ctx.fillRect(c*cellPx,r*cellPx,cellPx,cellPx);
+  // 出口
+  const gx=goal[1]*cellPx+cellPx/2, gy=goal[0]*cellPx+cellPx/2;
+  const pulse=0.5+0.5*Math.sin(performance.now()/300);
+  ctx.beginPath(); ctx.arc(gx,gy,cellPx*(0.55+pulse*0.25),0,7); ctx.fillStyle=`rgba(250,204,21,${0.25+pulse*0.3})`; ctx.fill();
+  ctx.fillStyle='#facc15'; ctx.fillRect(gx-cellPx*0.28,gy-cellPx*0.28,cellPx*0.56,cellPx*0.56);
+  // 轨迹
+  for(const a of population){
+    if(a.trail.length>1){
+      ctx.strokeStyle=a.team==='greedy'?'rgba(74,222,128,0.16)':'rgba(251,146,60,0.16)';
+      ctx.lineWidth=Math.max(1,cellPx*0.16);
+      ctx.beginPath();
+      ctx.moveTo(a.trail[0][1]*cellPx+cellPx/2, a.trail[0][0]*cellPx+cellPx/2);
+      for(let i=1;i<a.trail.length;i++) ctx.lineTo(a.trail[i][1]*cellPx+cellPx/2, a.trail[i][0]*cellPx+cellPx/2);
+      ctx.stroke();
+    }
+  }
+  // agent
+  for(const a of population){
+    const x=a.c*cellPx+cellPx/2, y=a.r*cellPx+cellPx/2;
+    ctx.beginPath(); ctx.arc(x,y,cellPx*0.34,0,7);
+    ctx.fillStyle=a.team==='greedy'?'#4ade80':'#fb923c'; ctx.fill();
+    if(a.flash>0){ ctx.beginPath(); ctx.arc(x,y,cellPx*0.62,0,7); ctx.strokeStyle='rgba(248,113,113,0.9)'; ctx.lineWidth=2; ctx.stroke(); }
+  }
+  // 逃脱爆点
+  bursts=bursts.filter(b=>b.t>0);
+  for(const b of bursts){
+    b.t-=0.03;
+    ctx.beginPath(); ctx.arc(b.c*cellPx+cellPx/2, b.r*cellPx+cellPx/2, cellPx*(1.4-b.t),0,7);
+    ctx.strokeStyle=b.team==='greedy'?'rgba(74,222,128,'+b.t+')':'rgba(251,146,60,'+b.t+')';
+    ctx.lineWidth=2; ctx.stroke();
+  }
+  requestAnimationFrame(draw);
+}
+
+/* ---------- 交互 ---------- */
+let editMode='off', painting=false;
+cv.addEventListener('pointerdown',e=>{ painting=true; paintAt(e); });
+cv.addEventListener('pointermove',e=>{ if(painting) paintAt(e); });
+window.addEventListener('pointerup',()=>painting=false);
+function paintAt(e){
+  if(editMode==='off') return;
+  const rect=cv.getBoundingClientRect();
+  const c=Math.floor((e.clientX-rect.left)/cellPx), r=Math.floor((e.clientY-rect.top)/cellPx);
+  if(r<0||r>=N||c<0||c>=N) return;
+  if(r===goal[0]&&c===goal[1]) return;
+  if(editMode==='wall'){
+    if(population.some(a=>a.r===r&&a.c===c)) return;
+    wall[r][c]=true; heat[r][c]=0;
+  }else{
+    wall[r][c]=false; heat[r][c]=0.5;
+    if(!spawnCells.some(s=>s[0]===r&&s[1]===c)) spawnCells.push([r,c]);
+  }
+}
+document.querySelectorAll('input[name=edit]').forEach(el=>el.addEventListener('change',()=>{editMode=document.querySelector('input[name=edit]:checked').value;}));
+
+const $=id=>document.getElementById(id);
+$('inCount').addEventListener('input',e=>$('valCount').textContent=e.target.value);
+$('inDelay').addEventListener('input',e=>{$('valDelay').textContent=(e.target.value/1000).toFixed(1)+'s';});
+$('btnPause').addEventListener('click',()=>{paused=!paused; syncPauseBtn(); if(!paused) tick();});
+function syncPauseBtn(){ $('btnPause').textContent=paused?'▶ 继续':'⏸ 暂停'; setMode(paused?'已暂停':'运行中'); }
+$('btnReset').addEventListener('click',()=>{ resetAgents(); updateStats(); toast('已重置 agent(迷宫不变)'); });
+$('btnNew').addEventListener('click',()=>{
+  N=+$('inSize').value; genMaze(Math.floor(Math.random()*90000)+1000);
+  resetAgents(); fitCanvas(); updateStats(); toast('新迷宫已生成');
+});
+$('inSize').addEventListener('change',()=>$('btnNew').click());
+$('inTopo').addEventListener('change',()=>$('btnNew').click());
+
+let toastTimer=null;
+function toast(msg,ms=2400){
+  const t=$('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms);
+}
+function setMode(s){ $('stMode').textContent=s; }
+function updateStats(chunks){
+  $('stTick').textContent=tickCount;
+  $('stLat').textContent=lastLatency?lastLatency.toFixed(2)+'s':'–';
+  chunksOfLastTick=chunks||chunksOfLastTick;
+  $('stBatch').textContent=chunksOfLastTick||Math.ceil(population.length/BATCH);
+  $('stAlive').textContent=population.length;
+  $('scoreG').textContent=teamScore.greedy; $('scoreO').textContent=teamScore.sample;
+  $('colG').textContent=teamStats.greedy.col; $('colO').textContent=teamStats.sample.col;
+  $('stuckG').textContent=teamStats.greedy.stuck; $('stuckO').textContent=teamStats.sample.stuck;
+}
+
+/* ---------- 启动 ---------- */
+window.__swarm = { // 只读调试钩子
+  get population(){return population}, get wall(){return wall}, get heat(){return heat},
+  get goal(){return goal}, get tickCount(){return tickCount},
+  get teamScore(){return teamScore}, get paused(){return paused}
+};
+genMaze(Math.floor(Math.random()*90000)+1000);
+resetAgents();
+fitCanvas(); window.addEventListener('resize',fitCanvas);
+requestAnimationFrame(draw);
+updateStats();
+setTimeout(tick,600);
+</script>
+</body>
+</html>

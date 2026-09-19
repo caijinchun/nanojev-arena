@@ -1,0 +1,4 @@
+NanoJev/
+*.pyc
+__pycache__/
+.venv/
