@@ -8,7 +8,6 @@ UP = ROOT / "NanoJev"
 MIRROR = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
 CHECKPOINTS = {
     "games_gold_seed17": "贪吃蛇大乱斗",
-    "local_atomic_seed17": "百人求生",
 }
 
 def run(cmd, cwd=None, env=None):
@@ -33,13 +32,12 @@ def main():
     env = dict(os.environ, HF_ENDPOINT=MIRROR, HF_HUB_DISABLE_XET="1")
     run([py, "-c",
          "from huggingface_hub import snapshot_download\n"
-         "for v in ['games_gold_seed17', 'local_atomic_seed17']:\n"
-         "    snapshot_download(repo_id='C-Tianyu/NanoJev', local_dir='checkpoints/' + v.split('_')[0],\n"
-         "                      allow_patterns=[f'variants/{v}/*'])\n"
-         "print('checkpoints ok')"],
+         "snapshot_download(repo_id='C-Tianyu/NanoJev', local_dir='checkpoints/games',\n"
+         "                  allow_patterns=['variants/games_gold_seed17/*'])\n"
+         "print('checkpoint ok')"],
         cwd=UP, env=env)
 
-    for page in ("snake.html", "swarm.html", "intro.html"):
+    for page in ("snake.html",):
         shutil.copy(ROOT / "web" / page, UP / "web" / page)
         print("[copy] web/" + page)
 

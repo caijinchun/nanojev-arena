@@ -12,22 +12,17 @@
   <img src="assets/arena.png" alt="游戏 + AI 思维面板" width="420">
 </p>
 
-## ✨ 两个玩法
+## ✨ 玩法
 
-| 页面 | 玩法 |
-|---|---|
-| `web/snake.html` | **贪吃蛇大乱斗**:1 v 4 人机对战。撞墙撞身即死,尸体化作食物,记分板实时排名 |
-| `web/swarm.html` | **百人求生**:最多 100 个 agent,各自只有 5×5 局部视野;红绿热力图实时呈现模型对每个格子的"恐惧",鼠标可现场画墙看概率场重排 |
-| `web/intro.html` | 竖屏动画卡片(1080×1920),URL 参数 `scene`/`dur` 控制场景与时长,用于视频制作 |
+**贪吃蛇大乱斗(`web/snake.html`)**:1 v 4 人机对战。你和朋友——四条 NanoJev AI 蛇——同场抢食;撞墙撞身即死,尸体化作食物,记分板实时排名,右侧面板实时展示每条 AI 蛇此刻的方向概率分布。
 
 ## 🎮 操作
 
-| 按键 / 鼠标 | 作用 |
+| 按键 | 作用 |
 |---|---|
 | `↑ ↓ ← →` 或 `W A S D` | 控制金色蛇方向 |
 | `P` | 暂停 / 继续 |
 | `R` | 重新开局 |
-| 鼠标点击 / 拖动(swarm 页) | 画墙 / 擦墙(先在右侧选编辑模式) |
 
 ## 📦 安装
 
@@ -43,8 +38,8 @@ python install.py
 
 1. 克隆上游 [NanoJev](https://github.com/TianyuCodings/NanoJev) 仓库;
 2. 创建虚拟环境并安装 Python 依赖;
-3. 从 HuggingFace 下载两个已训练 checkpoint(默认走 `hf-mirror.com` 镜像,国内可用;约 2 × 2.3 GB);
-4. 把本仓库的游戏页面拷入上游 `web/` 目录。
+3. 从 HuggingFace 下载已训练 checkpoint(默认走 `hf-mirror.com` 镜像,国内可用;约 2.3 GB);
+4. 把 `web/snake.html` 拷入上游 `web/` 目录。
 
 ## 🚀 启动
 
@@ -57,12 +52,6 @@ cd NanoJev
 ```
 
 打开 **http://127.0.0.1:8766/snake.html** 开打。
-
-百人求生(可选):
-
-```bash
-python scripts/serve_decisions.py --checkpoint-dir checkpoints/local_atomic/variants/local_atomic_seed17 --web-root web --port 8765 --precision fp32
-```
 
 ## 🧠 工作原理:代码 + 模型混合决策
 
